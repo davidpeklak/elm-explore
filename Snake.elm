@@ -77,18 +77,19 @@ scaledGameSize = {x = scale * (gameSize.x * 2 + 1) + 4
 deathText : Form
 deathText = toForm <| asText "Game over. Reload page"
 
+court : Form
+court = filled gray <| rect (toFloat scaledGameSize.x) (toFloat scaledGameSize.y)
+
 ballList : Model -> List Form
 ballList m = let head = (display m.h.x m.h.y headBall)
                  tail = (List.map (\c -> display c.x c.y tailBall) m.t)
              in head :: tail
 
 view : (Int, Int) -> Model -> Element
-view (w, h) m = container w h middle <|
-           collage scaledGameSize.x scaledGameSize.y <|
-             (filled gray (rect (toFloat scaledGameSize.x)  (toFloat scaledGameSize.y)) ) ::
-               (if | m.s == Alive -> ballList m 
-                   | m.s == Dead  -> [ deathText ]
-               )             
+view (w, h) m = container w h middle 
+                  <| collage scaledGameSize.x scaledGameSize.y 
+                  <| court :: if | m.s == Alive -> ballList m 
+                                 | m.s == Dead  -> [ deathText ]
 
 -- SIGNALS
 
