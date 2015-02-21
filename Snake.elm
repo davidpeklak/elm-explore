@@ -21,7 +21,7 @@ type alias Model = {i : Int, h : Coordinates, t : List Coordinates, s : State, d
 type alias GameSize = Coordinates
 
 gameSize : GameSize
-gameSize = {x = 12, y = 6}
+gameSize = {x = 24, y = 12}
 
 -- UPDATE
 
@@ -34,7 +34,7 @@ moveHead c d = if | d == left  -> {c | x <- c.x-1}
                   | d == down  -> {c | y <- c.y-1}
 
 lengthRatio : Int
-lengthRatio = 5
+lengthRatio = 1
 
 applyMove : Model -> Model
 applyMove ({i, h, t, s, d} as m) = if | s == Dead -> m
