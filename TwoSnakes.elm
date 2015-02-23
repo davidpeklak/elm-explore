@@ -21,6 +21,7 @@ type alias SnakeModel = {i : Int, h : Coordinates, t : List Coordinates, s : Sna
 type GameState = Running
                | Snake1Won
                | Snake2Won
+               | Draw
 
 type alias Model = {s1 : SnakeModel, s2 : SnakeModel, gs: GameState}
 
@@ -45,7 +46,7 @@ moveHead c d = if | d == left  -> {c | x <- c.x-1}
                   | d == down  -> {c | y <- c.y-1}
 
 lengthRatio : Int
-lengthRatio = 5
+lengthRatio = 2
 
 applyMove :SnakeModel -> SnakeModel
 applyMove ({i, h, t, s, d} as m) = if | s == Dead -> m
@@ -58,11 +59,19 @@ checkDeath gs sm other = if | sm.h.x > gs.x|| sm.h.x < 0 - gs.x || sm.h.y > gs.y
 moveSnake : Direction -> SnakeModel -> SnakeModel
 moveSnake d sm = applyMove <| {sm | d <- d}
 
+checkWon : Model -> Model
+checkWon ({s1, s2, gs} as m) = if | s1.s == Alive && s2.s == Dead  -> {m |gs <- Snake1Won}
+                                  | s1.s == Dead  && s2.s == Alive -> {m |gs <- Snake2Won}
+                                  | s1.s == Dead  && s2.s == Dead  -> {m |gs <- Draw}
+                                  | otherwise -> m                                 
+
 update : Directions -> Model -> Model
-update {d1, d2} ({s1, s2, gs} as m) = crossMap (checkDeath gameSize)
-                                      <| {m |s1 <- moveSnake d1 s1
-                                            ,s2 <- moveSnake d2 s2
-                                         }  
+update {d1, d2} ({s1, s2, gs} as m) = if | gs == Running -> checkWon
+                                                            <| crossMap (checkDeath gameSize)
+                                                            <| {m |s1 <- moveSnake d1 s1
+                                                                  ,s2 <- moveSnake d2 s2
+                                                               }
+                                         | otherwise -> m
 
 -- VIEW
 
@@ -77,9 +86,6 @@ scaledGameSize = {x = scale * (gameSize.x * 2 + 1) + 4
                  ,y = scale * (gameSize.y * 2 + 1) + 4
                  }
 
-deathText : Form
-deathText = toForm <| asText "Game over. Reload page"
-
 court : Form
 court = filled gray <| rect (toFloat scaledGameSize.x) (toFloat scaledGameSize.y)
 
@@ -89,15 +95,24 @@ headBall = oval (toFloat scale) (toFloat scale)
 tailBall : Shape
 tailBall = oval (toFloat scale * 0.5) (toFloat scale * 0.5)
 
+winBall : Shape
+winBall = oval (toFloat scale * 5.0) (toFloat scale * 5.0)
+
 ballList : Color -> SnakeModel -> List Form
 ballList c m = let head = (display c m.h.x m.h.y headBall)
                    tail = (List.map (\e -> display c e.x e.y tailBall) m.t)
                in head :: tail
 
+onCourt : Model -> List Form
+onCourt m = if | m.gs == Snake1Won -> [display blue -6 0 winBall]
+               | m.gs == Snake2Won -> [display red   6 0 winBall]
+               | m.gs == Draw      -> [display blue -6 0 winBall, display red 6 0 winBall]
+               | m.gs == Running   -> append (ballList blue m.s1) (ballList red m.s2)
+
 view : (Int, Int) -> Model -> Element
 view (w, h) m = container w h middle 
                   <| collage scaledGameSize.x scaledGameSize.y 
-                  <| court :: (append (ballList blue m.s1) (ballList red m.s2)) 
+                  <| court :: (onCourt m)
 -- SIGNALS
 
 updateDirection1 : Int -> Direction -> Direction
@@ -133,7 +148,7 @@ init : Model
 init = {s1 = initSnakeModel -1 left, s2 = initSnakeModel 1 right, gs = Running}
 
 model : Signal Model
-model = foldp update init (sampleOn (fps 2) directions) 
+model = foldp update init (sampleOn (fps 3) directions) 
 
 -- MAIN
 
