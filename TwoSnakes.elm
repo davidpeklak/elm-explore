@@ -2,42 +2,56 @@ import Color (..)
 import Graphics.Collage (..)
 import Graphics.Element (..)
 import Keyboard
-import Signal (Signal, map, map2, foldp, sampleOn)
+import Signal (Signal, map, map2, merge, foldp, sampleOn)
 import Text (asText)
-import Time (fps)
+import Time (Time, fps, inSeconds)
 import Window
 import List
 import List (take, member, (::), append)
 
 -- MODEL
 
+type alias Coordinates = {x : Int, y : Int}
+
 type SnakeState = Alive
                 | Dead
 
-type alias Coordinates = {x : Int, y : Int}
-
 type alias SnakeModel = {i : Int, h : Coordinates, t : List Coordinates, s : SnakeState, d : Direction}
 
-type GameState = Running
-               | Snake1Won
-               | Snake2Won
-               | Draw
+type alias RunningModel = {s1 : SnakeModel, s2 : SnakeModel, tick : Time}
 
-type alias Model = {s1 : SnakeModel, s2 : SnakeModel, gs: GameState}
+type Model = Running RunningModel
+           | Snake1Won
+           | Snake2Won
+           | Draw
 
-crossMap : (SnakeModel -> SnakeModel -> SnakeModel) -> Model -> Model
-crossMap f ({s1, s2} as m) = {m |s1 <- f s1 s2
-                                ,s2 <- f s2 s1
-                             } 
+forSnakes : (SnakeModel -> SnakeModel) -> RunningModel -> RunningModel
+forSnakes f ({s1, s2} as rm) = {rm |s1 <- f s1
+                                   ,s2 <- f s2
+                               }
+
+crossMap : (SnakeModel -> SnakeModel -> SnakeModel) -> RunningModel -> RunningModel
+crossMap f ({s1, s2} as rm) = {rm |s1 <- f s1 s2
+                                  ,s2 <- f s2 s1
+                              } 
 
 type alias GameSize = Coordinates
 
 gameSize : GameSize
 gameSize = {x = 24, y = 12}
 
+speed : Int
+speed = 3
+
+step : Float
+step = 1.0 / (toFloat speed)
+
 -- UPDATE
 
-type alias Directions = {d1 : Direction, d2 : Direction} 
+type Action = Direction1 Direction
+            | Direction2 Direction
+            | Restart
+            | Tick Time 
 
 moveHead : Coordinates -> Direction -> Coordinates
 moveHead c d = if | d == left  -> {c | x <- c.x-1}
@@ -48,7 +62,7 @@ moveHead c d = if | d == left  -> {c | x <- c.x-1}
 lengthRatio : Int
 lengthRatio = 2
 
-applyMove :SnakeModel -> SnakeModel
+applyMove : SnakeModel -> SnakeModel
 applyMove ({i, h, t, s, d} as m) = if | s == Dead -> m
                                       | otherwise -> { m | h <- moveHead h d, t <- take (i // lengthRatio) (h :: t), i <- i + 1}
   
@@ -59,19 +73,27 @@ checkDeath gs sm other = if | sm.h.x > gs.x|| sm.h.x < 0 - gs.x || sm.h.y > gs.y
 moveSnake : Direction -> SnakeModel -> SnakeModel
 moveSnake d sm = applyMove <| {sm | d <- d}
 
-checkWon : Model -> Model
-checkWon ({s1, s2, gs} as m) = if | s1.s == Alive && s2.s == Dead  -> {m |gs <- Snake1Won}
-                                  | s1.s == Dead  && s2.s == Alive -> {m |gs <- Snake2Won}
-                                  | s1.s == Dead  && s2.s == Dead  -> {m |gs <- Draw}
-                                  | otherwise -> m                                 
+checkWon : RunningModel -> Model
+checkWon ({s1, s2} as rm) = if | s1.s == Alive && s2.s == Dead  -> Snake1Won
+                               | s1.s == Dead  && s2.s == Alive -> Snake2Won
+                               | s1.s == Dead  && s2.s == Dead  -> Draw
+                               | otherwise -> Running rm                                 
 
-update : Directions -> Model -> Model
-update {d1, d2} ({s1, s2, gs} as m) = if | gs == Running -> checkWon
-                                                            <| crossMap (checkDeath gameSize)
-                                                            <| {m |s1 <- moveSnake d1 s1
-                                                                  ,s2 <- moveSnake d2 s2
-                                                               }
-                                         | otherwise -> m
+updateRunning : Action -> RunningModel -> RunningModel
+updateRunning a ({s1, s2, tick} as m) = case a of
+        Direction1 d1 -> {m |s1 <- {s1 |d <- d1}}
+        Direction2 d2 -> {m |s2 <- {s2 |d <- d2}}
+        Tick t -> let sum = tick + (inSeconds t) in
+                  if | sum < step -> {m |tick <- sum} 
+                     | otherwise  -> forSnakes applyMove {m |tick <- sum - step}
+        _ -> m
+
+update : Action -> Model -> Model
+update a m = case m of
+               Running rm -> checkWon <| crossMap (checkDeath gameSize) <| updateRunning a rm
+               _ -> case a of 
+                      Restart -> init
+                      _ -> m
 
 -- VIEW
 
@@ -104,10 +126,11 @@ ballList c m = let head = (display c m.h.x m.h.y headBall)
                in head :: tail
 
 onCourt : Model -> List Form
-onCourt m = if | m.gs == Snake1Won -> [display blue -6 0 winBall]
-               | m.gs == Snake2Won -> [display red   6 0 winBall]
-               | m.gs == Draw      -> [display blue -6 0 winBall, display red 6 0 winBall]
-               | m.gs == Running   -> append (ballList blue m.s1) (ballList red m.s2)
+onCourt m = case m of
+              Running rm -> append (ballList blue rm.s1) (ballList red rm.s2)
+              Snake1Won  -> [display blue -6 0 winBall]
+              Snake2Won  -> [display red   6 0 winBall]
+              Draw       -> [display blue -6 0 winBall, display red 6 0 winBall]
 
 view : (Int, Int) -> Model -> Element
 view (w, h) m = container w h middle 
@@ -115,40 +138,40 @@ view (w, h) m = container w h middle
                   <| court :: (onCourt m)
 -- SIGNALS
 
-updateDirection1 : Int -> Direction -> Direction
-updateDirection1 key d = if | key == 65 -> left
-                            | key == 87 -> up
-                            | key == 68 -> right
-                            | key == 83 -> down
-                            | otherwise -> d
+keyToMaybeAction : Int -> Maybe Action
+keyToMaybeAction key = if | key == 65 -> Just <| Direction1 left
+                          | key == 87 -> Just <| Direction1 up
+                          | key == 68 -> Just <| Direction1 right
+                          | key == 83 -> Just <| Direction1 down
+                          | key == 37 -> Just <| Direction2 left
+                          | key == 38 -> Just <| Direction2 up
+                          | key == 39 -> Just <| Direction2 right
+                          | key == 40 -> Just <| Direction2 down
+                          | key == 32 -> Just Restart
+                          | otherwise -> Nothing
 
-updateDirection2 : Int -> Direction -> Direction 
-updateDirection2 key d = if | key ==  37 -> left
-                            | key ==  38 -> up
-                            | key ==  39 -> right
-                            | key ==  40 -> down
-                            | otherwise  -> d
-                          
+collect : Maybe Action -> Action -> Action
+collect ma a = case ma of
+                 Just na -> na
+                 Nothing -> a
 
-updateDirections : Int -> Directions -> Directions
-updateDirections key ({d1, d2} as ds) = {ds |d1 <- updateDirection1 key d1
-                                            ,d2 <- updateDirection2 key d2
-                                        }
+keyAction : Signal Action
+keyAction = foldp collect (Tick 0) <| map keyToMaybeAction Keyboard.lastPressed
 
-initDirections : Directions
-initDirections = {d1 = left, d2 = right}
+timeAction : Signal Action
+timeAction = map (\t -> Tick t) <| fps 15
 
-directions : Signal Directions
-directions = foldp updateDirections initDirections Keyboard.lastPressed
+action : Signal Action
+action = merge keyAction timeAction
 
 initSnakeModel : Int -> Direction -> SnakeModel
 initSnakeModel x d = {i = 0, s = Alive, d = d, h = {x = x, y = 0}, t = []}
 
 init : Model
-init = {s1 = initSnakeModel -1 left, s2 = initSnakeModel 1 right, gs = Running}
+init = Running {s1 = initSnakeModel -1 left, s2 = initSnakeModel 1 right, tick = 0}
 
 model : Signal Model
-model = foldp update init (sampleOn (fps 3) directions) 
+model = foldp update init action
 
 -- MAIN
 
